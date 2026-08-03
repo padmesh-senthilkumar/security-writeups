@@ -8,11 +8,11 @@
 
 ## Executive Summary
 
-Over a multi-week period, a security assessment was conducted against DVWA (Damn Vulnerable Web Application), a legally sanctioned platform for practicing web application security testing. The assessment identified three critical vulnerability categories: SQL Injection, Cross-Site Scripting (XSS), and Command Injection. Each vulnerability was successfully exploited in a controlled environment to demonstrate real-world impact, including unauthorized data extraction, session hijacking potential, and arbitrary command execution on the host system. Findings and remediation recommendations are detailed below.
+Over a multi-week period, a security assessment was conducted against DVWA (Damn Vulnerable Web Application), a legally sanctioned platform for practicing web application security testing. The assessment identified six vulnerability categories: SQL Injection, Cross-Site Scripting (XSS), Command Injection, Unrestricted File Upload, Cross-Site Request Forgery (CSRF), and Weak Session IDs. Each vulnerability was successfully exploited in a controlled environment to demonstrate real-world impact, including unauthorized data extraction, session hijacking, silent account takeover, and full remote code execution on the host system. Findings and remediation recommendations are detailed below.
 
 ## Scope & Methodology
 
-Testing was performed against a locally hosted instance of DVWA running at security level **"low,"** inside an isolated Kali Linux virtual machine (VirtualBox, NAT networking). All testing was conducted exclusively against the tester's own environment, in accordance with responsible and legal security research practices. Tools used included the built-in browser, the Linux terminal, Hydra, John the Ripper, and manual payload crafting.
+Testing was performed against a locally hosted instance of DVWA running at security level **"low,"** inside an isolated Kali Linux virtual machine (VirtualBox, NAT networking). All testing was conducted exclusively against the tester's own environment, in accordance with responsible and legal security research practices. Tools used included the built-in browser, the Linux terminal, Firefox Developer Tools, Hydra, John the Ripper, and manual payload crafting.
 
 ## Findings Summary
 
@@ -21,6 +21,9 @@ Testing was performed against a locally hosted instance of DVWA running at secur
 | 1 | SQL Injection | High |
 | 2 | Cross-Site Scripting (Reflected XSS) | Medium-High |
 | 3 | Command Injection | High |
+| 4 | Unrestricted File Upload | High |
+| 5 | Cross-Site Request Forgery (CSRF) | High |
+| 6 | Weak / Predictable Session IDs | High |
 
 ---
 
@@ -82,12 +85,74 @@ Submitting the payload above in the input field caused the script to execute upo
 
 Entering the payload above into the ping input field executed the intended ping command followed by an unauthorized `whoami` command, confirming arbitrary command execution on the host.
 
-**Impact:** An attacker could execute arbitrary commands on the server read sensitive files, create backdoor accounts, deploy malware, or pivot to attack other systems on the network. This represents full compromise potential, not just data exposure.
+**Impact:** An attacker could execute arbitrary commands on the server — read sensitive files, create backdoor accounts, deploy malware, or pivot to attack other systems on the network. This represents full compromise potential, not just data exposure.
 
 **Recommendation:** Avoid passing user input directly to system shell commands. Use safe API calls or built-in language functions instead of shell execution wherever possible. Where shell commands are unavoidable, strictly whitelist allowed input (e.g., valid IP address formats only) and reject or escape special characters such as `;`, `&&`, and `|`.
 
 ---
 
+## Finding 4: Unrestricted File Upload
+
+**Severity:** High
+
+**Description:** The application's file upload feature does not validate the type or content of uploaded files, allowing an attacker to upload and execute a malicious script.
+
+**Steps to Reproduce:**
+
+```php
+<?php system($_GET["cmd"]); ?>
+```
+
+Saved as `shell.php` and uploaded via the File Upload form. The file uploaded successfully with no restriction on file type. Navigating to the uploaded file's path and appending a command parameter confirmed remote code execution:
+
+```
+http://127.0.0.1/hackable/uploads/shell.php?cmd=whoami
+```
+
+The server executed the command and returned `www-data` directly in the browser.
+
+**Impact:** An attacker gains a persistent web shell on the server, enabling arbitrary and repeatable command execution at will, without needing to re-exploit the application. This represents a more severe and durable compromise than a one-off command injection.
+
+**Recommendation:** Whitelist allowed file extensions and reject all others. Validate actual file content/magic bytes rather than trusting the filename or declared MIME type. Store uploaded files outside the web-executable directory, or disable script execution within the upload directory. Rename uploaded files server-side to remove attacker control over the filename.
+
+---
+
+## Finding 5: Cross-Site Request Forgery (CSRF)
+
+**Severity:** High
+
+**Description:** The password change function accepts sensitive state-changing requests via GET parameters with no verification that the request was intentionally submitted by the authenticated user, and no CSRF token protection.
+
+**Steps to Reproduce:**
+
+```
+http://127.0.0.1/vulnerabilities/csrf/?password_new=hacked123&password_conf=hacked123&Change=Change
+```
+
+Simply loading this URL while authenticated silently changed the logged-in user's password, with no confirmation step and no interaction with the actual form.
+
+**Impact:** An attacker can craft a malicious link or embed the request (e.g., as a hidden image tag) on an external site. If a victim with an active session loads it, their password is silently changed without their knowledge, resulting in full account takeover.
+
+**Recommendation:** Use POST requests for all state-changing actions rather than GET. Implement unique, unpredictable CSRF tokens embedded in each form and validate them server-side on submission. Consider requiring re-authentication (current password) for sensitive actions such as password changes.
+
+---
+
+## Finding 6: Weak / Predictable Session IDs
+
+**Severity:** High
+
+**Description:** Session identifiers issued by the application are generated as a simple incrementing counter rather than a cryptographically random value.
+
+**Steps to Reproduce:**
+
+Repeatedly triggering session generation via the application returned sequential, predictable values (e.g., `50, 51, 52...`) for the `dvwaSession` cookie.
+
+**Impact:** An attacker who observes their own session ID can predict or brute-force nearby values to hijack another user's active session without needing their password, credentials, or any other interaction with the victim.
+
+**Recommendation:** Generate session identifiers using a cryptographically secure random number generator, producing long (32+ character), high-entropy values that cannot be feasibly guessed or enumerated. Rotate session IDs on privilege changes (e.g., login) and enforce expiration.
+
+---
+
 ## Conclusion
 
-The assessment of DVWA revealed a consistent underlying pattern across all three findings: a failure to properly separate user-supplied input from executable code or commands. Whether in SQL queries, HTML/JavaScript rendering, or system shell execution, each vulnerability stemmed from the application trusting user input without adequate validation or sanitization. Given the severity of these findings ranging from full database disclosure to complete server compromise the overall risk profile of this application, if deployed in production, would be classified as **Critical**. It is strongly recommended that input validation, output encoding, and parameterized/prepared statements be treated as baseline requirements in the development lifecycle, not optional safeguards.
+The assessment of DVWA revealed a consistent underlying pattern across the majority of findings: a failure to properly separate user-supplied input from executable code or commands. This was evident in SQL Injection, XSS, Command Injection, and Unrestricted File Upload alike each stemmed from the application trusting user input (whether typed, scripted, or uploaded) without adequate validation or sanitization. The remaining two findings, CSRF and Weak Session IDs, point to a second, related theme: insufficient protection of the session and request-authenticity layer, allowing an attacker to act as, or impersonate, a legitimate user without ever needing their credentials. Given the severity of these findings ranging from full database disclosure to complete server compromise and silent account takeover the overall risk profile of this application, if deployed in production, would be classified as **Critical**. It is strongly recommended that input validation, output encoding, parameterized/prepared statements, CSRF tokens, and cryptographically random session identifiers be treated as baseline requirements in the development lifecycle, not optional safeguards.
