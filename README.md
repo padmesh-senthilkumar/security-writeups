@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Over a multi-week period, a security assessment was conducted against DVWA (Damn Vulnerable Web Application), a legally sanctioned platform for practicing web application security testing. The assessment identified six vulnerability categories: SQL Injection, Cross-Site Scripting (XSS), Command Injection, Unrestricted File Upload, Cross-Site Request Forgery (CSRF), and Weak Session IDs. Each vulnerability was successfully exploited in a controlled environment to demonstrate real-world impact, including unauthorized data extraction, session hijacking, silent account takeover, and full remote code execution on the host system. Findings and remediation recommendations are detailed below.
+Over a multi-week period, a security assessment was conducted against DVWA (Damn Vulnerable Web Application), a legally sanctioned platform for practicing web application security testing. The assessment identified eight vulnerability categories: SQL Injection, Reflected Cross-Site Scripting (XSS), DOM-Based Cross-Site Scripting (XSS), Command Injection, Unrestricted File Upload, Cross-Site Request Forgery (CSRF), Weak Session IDs, and Insecure CAPTCHA. Each vulnerability was successfully exploited in a controlled environment to demonstrate real-world impact, including unauthorized data extraction, session hijacking, silent account takeover, and full remote code execution on the host system. Findings and remediation recommendations are detailed below.
 
 ## Scope & Methodology
 
@@ -24,6 +24,8 @@ Testing was performed against a locally hosted instance of DVWA running at secur
 | 4 | Unrestricted File Upload | High |
 | 5 | Cross-Site Request Forgery (CSRF) | High |
 | 6 | Weak / Predictable Session IDs | High |
+| 7 | DOM-Based Cross-Site Scripting (XSS) | Medium-High |
+| 8 | Insecure CAPTCHA | Medium |
 
 ---
 
@@ -85,7 +87,7 @@ Submitting the payload above in the input field caused the script to execute upo
 
 Entering the payload above into the ping input field executed the intended ping command followed by an unauthorized `whoami` command, confirming arbitrary command execution on the host.
 
-**Impact:** An attacker could execute arbitrary commands on the server — read sensitive files, create backdoor accounts, deploy malware, or pivot to attack other systems on the network. This represents full compromise potential, not just data exposure.
+**Impact:** An attacker could execute arbitrary commands on the server read sensitive files, create backdoor accounts, deploy malware, or pivot to attack other systems on the network. This represents full compromise potential, not just data exposure.
 
 **Recommendation:** Avoid passing user input directly to system shell commands. Use safe API calls or built-in language functions instead of shell execution wherever possible. Where shell commands are unavoidable, strictly whitelist allowed input (e.g., valid IP address formats only) and reject or escape special characters such as `;`, `&&`, and `|`.
 
@@ -145,7 +147,9 @@ Simply loading this URL while authenticated silently changed the logged-in user'
 
 **Steps to Reproduce:**
 
-Repeatedly triggering session generation via the application returned sequential, predictable values (e.g., `50, 51, 52...`) for the `dvwaSession` cookie.
+1. Navigate to the "Weak Session IDs" module and click **Generate** repeatedly.
+2. Inspect the `dvwaSession` cookie value after each click (via browser dev tools → Storage → Cookies).
+3. Observed values increased sequentially (e.g., `50`, `51`, `52`...) with each generation.
 
 **Impact:** An attacker who observes their own session ID can predict or brute-force nearby values to hijack another user's active session without needing their password, credentials, or any other interaction with the victim.
 
@@ -153,6 +157,47 @@ Repeatedly triggering session generation via the application returned sequential
 
 ---
 
+## Finding 7: DOM-Based Cross-Site Scripting (XSS)
+
+**Severity:** Medium-High
+
+**Description:** The page's client-side JavaScript reads a value directly from the URL and inserts it into the DOM without sanitization. Unlike Reflected XSS, this payload is never sent to or processed by the server — the vulnerability exists entirely in client-side code.
+
+**Steps to Reproduce:**
+
+1. Navigate to the "XSS (DOM)" module.
+2. Modify the URL parameter directly:
+
+```
+http://127.0.0.1/vulnerabilities/xss_d/?default=<script>alert('DOM XSS')</script>
+```
+
+3. The injected script executed immediately upon page load, confirmed via a JavaScript alert dialog.
+
+**Impact:** Because the payload never touches the server, it leaves no server-side log trace, making DOM-based XSS harder to detect with traditional server-side monitoring (e.g., WAFs). An attacker distributing a crafted link (email, ad, shortened URL) can execute arbitrary JavaScript in any victim's browser who clicks it — enabling session hijacking, credential theft, or malicious redirection at scale.
+
+**Recommendation:** Avoid inserting untrusted data (including URL parameters) directly into the DOM via unsafe methods (e.g., `innerHTML`, `document.write`). Use safe DOM APIs (e.g., `textContent`) or a client-side sanitization library. Apply a Content Security Policy (CSP) as a defense-in-depth measure against inline script execution.
+
+---
+
+## Finding 8: Insecure CAPTCHA
+
+**Severity:** Medium
+
+**Description:** The CAPTCHA-protected password change function relies entirely on client-side, multi-step form logic to enforce CAPTCHA verification before allowing a password change. The server does not independently verify that the CAPTCHA step was actually completed before processing the underlying password-change request.
+
+**Steps to Reproduce:**
+
+1. Navigate to the "Insecure CAPTCHA" module.
+2. Instead of completing step 1 (the CAPTCHA challenge) as intended, submit a request directly to the step 2 password-change endpoint, bypassing the CAPTCHA form entirely.
+3. The application accepted the password change with no CAPTCHA verification performed, confirming the CAPTCHA check exists only as a client-side gate rather than a server-enforced control.
+
+**Impact:** An attacker (or automated script) can bypass the intended human-verification step entirely, defeating the purpose of the CAPTCHA. This enables automated, scripted abuse of the password-change function. e.g., brute-force or scripted attacks that the CAPTCHA was specifically meant to prevent.
+
+**Recommendation:** Enforce CAPTCHA verification server-side, not just as a client-side or multi-step form gate the server must independently confirm a valid CAPTCHA response was submitted before processing the associated action. Tie the CAPTCHA verification to the specific request/session it protects so it cannot be skipped or replayed.
+
+---
+
 ## Conclusion
 
-The assessment of DVWA revealed a consistent underlying pattern across the majority of findings: a failure to properly separate user-supplied input from executable code or commands. This was evident in SQL Injection, XSS, Command Injection, and Unrestricted File Upload alike each stemmed from the application trusting user input (whether typed, scripted, or uploaded) without adequate validation or sanitization. The remaining two findings, CSRF and Weak Session IDs, point to a second, related theme: insufficient protection of the session and request-authenticity layer, allowing an attacker to act as, or impersonate, a legitimate user without ever needing their credentials. Given the severity of these findings ranging from full database disclosure to complete server compromise and silent account takeover the overall risk profile of this application, if deployed in production, would be classified as **Critical**. It is strongly recommended that input validation, output encoding, parameterized/prepared statements, CSRF tokens, and cryptographically random session identifiers be treated as baseline requirements in the development lifecycle, not optional safeguards.
+The assessment of DVWA revealed a consistent underlying pattern across the majority of findings: a failure to properly separate user-supplied input from executable code or commands. This was evident in SQL Injection, Reflected XSS, DOM-Based XSS, Command Injection, and Unrestricted File Upload alike each stemmed from the application trusting user input (whether typed, scripted, or uploaded, and whether processed server-side or client-side) without adequate validation or sanitization. The remaining three findings, CSRF, Weak Session IDs, and Insecure CAPTCHA, point to a second, related theme: insufficient server-side enforcement of security controls that should never rely on the client alone session authenticity, request authenticity, and human-verification checks were all either predictable or trivially bypassable. Given the severity of these findings ranging from full database disclosure to complete server compromise and silent account takeover — the overall risk profile of this application, if deployed in production, would be classified as **Critical**. It is strongly recommended that input validation, output encoding, parameterized/prepared statements, CSRF tokens, and cryptographically random session identifiers be treated as baseline requirements in the development lifecycle, not optional safeguards.
