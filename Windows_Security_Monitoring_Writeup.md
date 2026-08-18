@@ -14,7 +14,7 @@ This writeup documents hands-on Windows security monitoring and persistence exer
 
 ## Part 1: Windows Event Viewer & Security Event IDs
 
-Windows centralizes security-relevant activity in the Event Viewer, accessible via Start → search "Event Viewer". The Security log under **Windows Logs** records authentication events, account changes, and privilege use — the Windows equivalent of `journalctl -u ssh` on Linux. Events are identified by numeric IDs, which security analysts filter for during investigations and incident response.
+Windows centralizes security-relevant activity in the Event Viewer, accessible via Start → search "Event Viewer". The Security log under **Windows Logs** records authentication events, account changes, and privilege use the Windows equivalent of `journalctl -u ssh` on Linux. Events are identified by numeric IDs, which security analysts filter for during investigations and incident response.
 
 ### Key Security Event IDs Reference
 
@@ -65,7 +65,7 @@ net localgroup Administrators backdoor /add
 
 **4732 event:** `A member was added to a security-enabled local group` — also performed by admin.
 
-> **Detection signal:** These two events occurred ~4 minutes apart for the same new account. A brand-new account escalated to admin within minutes of creation is a textbook attacker pattern — legitimate onboarding rarely moves this fast or grants full admin immediately. Time-proximity between 4720 and 4732 for the same account is itself a red flag.
+> **Detection signal:** These two events occurred ~4 minutes apart for the same new account. A brand-new account escalated to admin within minutes of creation is a textbook attacker pattern legitimate onboarding rarely moves this fast or grants full admin immediately. Time-proximity between 4720 and 4732 for the same account is itself a red flag.
 
 **Key principle:** The **Subject field** tells you WHO acted. If that account is itself suspicious (newly created, unexpected), that's your investigation lead.
 
@@ -78,7 +78,7 @@ net user backdoor /delete
 
 ## Part 2: PowerShell Script Block Logging
 
-PowerShell is both a powerful admin tool and one of the most commonly abused attack vectors — built into every Windows machine, trusted by default, and capable of nearly anything. Default Windows logging only captures that PowerShell was *opened*, not what was actually run. Script Block Logging addresses this gap.
+PowerShell is both a powerful admin tool and one of the most commonly abused attack vectors built into every Windows machine, trusted by default, and capable of nearly anything. Default Windows logging only captures that PowerShell was *opened*, not what was actually run. Script Block Logging addresses this gap.
 
 ### Default PowerShell Events (Low Investigative Value)
 
